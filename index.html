@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Meow.js</title>
+    <style>
+        body{
+            display: flex;
+            justify-content: center;
+        }
+        .box {
+            display:flex;
+            justify-content: center;
+            align-items: center;
+            background: lightpink;
+            font-size: 48px;
+            height:300px;
+            width:300px;
+        }
+        button {
+            font-size:2rem;
+            margin:0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<!--
+ following is how we want users of the library to use it
+ It is the minimal example of what our library can do.
+-->
+<div m-app="counter">
+    <div class="box" m-text="count"></div>
+    <button m-click="increment">Increment</button>
+</div>
+
+<script>
+    const Meow = (function () {
+        /**
+         A page can contain multiple apps. Each app must have unque name.
+         */
+        const apps = {};
+        const tracks = {};
+
+
+        function observable(obj, appName) {
+            if (typeof obj !== "object") {
+                throw new Error(
+                    "Argument passed to observable function should be object"
+                );
+            }
+
+            let o = {};
+
+            for (let key in obj) {
+
+                if (typeof obj[key] === "function") {
+
+                    Object.defineProperty(o, key, {
+                        value: function () {
+
+                            return obj[key].apply(o, ...arguments);
+                        }
+                    });
+                } else {
+                    Object.defineProperty(o, key, {
+                        get() {
+                            return obj[key];
+                        },
+                        set(value) {
+                            runEffect(appName, key, obj[key], value);
+                            obj[key] = value;
+                        }
+                    });
+                }
+            }
+            return o;
+        }
+
+        function runEffect(app, prop, oldVal, val) {
+            //@TODO check if following thing is a node, just checking if it's object is not enough
+            if (typeof tracks[app + "." + prop] === "object") {
+                tracks[app + "." + prop].innerText = val;
+            }
+        }
+
+        /**
+         A model is standard javascript object which contains methods
+         */
+        function create(appName, model) {
+            if (apps.hasOwnProperty(appName)) {
+                throw new Error(`App with name ${appName} already exists`);
+            }
+
+            apps[appName] = observable(model, appName);
+            return apps[appName];
+        }
+
+        /**
+         Run function will traverse the DOM and
+         track all the nodes and properties bound to them
+         */
+        function run() {
+            /**
+             We first find out all the apps and within that app we want to know
+             all the properties which affect dom. When those peoperties change in the model
+             we need to update the DOM. We can maintain a map of properties and nodes affected
+             */
+            let nodes = document.querySelectorAll("[m-app]");
+            nodes.forEach((node) => {
+                let appName = node.getAttribute("m-app");
+
+                node.querySelectorAll("[m-text]").forEach((n) => {
+                    let prop = n.getAttribute("m-text");
+                    tracks[appName + "." + prop] = n;
+                    n.innerText = apps[appName][prop];
+                });
+
+
+                //@TODO no need to traverse DOM twice. Process the complete DOM once.
+                node.querySelectorAll("[m-click]").forEach((n) => {
+                    let funcName = n.getAttribute("m-click");
+                    if(!apps[appName][funcName]){
+                        throw new Error(`${funcName} function is not defined in app ${appName}`)
+                    }
+                    n.addEventListener('click',apps[appName][funcName]);
+                });
+
+            });
+        }
+
+        return {
+            create,
+            run
+        };
+    })();
+
+    Meow.create("counter", {
+        count: 0,
+        increment: function () {
+            this.count++;
+        }
+    });
+
+    Meow.run();
+
+</script>
+</body>
+</html>
