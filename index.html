@@ -4,8 +4,13 @@
     <meta charset="UTF-8">
     <title>Meow.js</title>
     <style>
+        *{
+            box-sizing: border-box;
+        }
         body{
             display: flex;
+            flex-direction: column;
+            align-items: center;
             justify-content: center;
         }
         .box {
@@ -21,28 +26,68 @@
             font-size:2rem;
             margin:0.5rem;
         }
+        nav ul {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+        li{
+            padding:2em;
+        }
+        section{
+            border: dotted black 1px;
+            width: 90%;
+            margin:1em;
+            padding:1em;
+        }
     </style>
 </head>
 <body>
-
+<nav>
+    <ul>
+    <li ><a href="#counter">Simple increment app</a></li>
+    <li ><a href="#iteration">Iterating over items</a></li>
+    <li ><a href="#computed-properties">Computed Properties</a></li>
+    </ul>
+</nav>
 <!--
  following is how we want users of the library to use it
  It is the minimal example of what our library can do.
 -->
-<div m-app="counter">
-    <div class="box" m-text="count"></div>
-    <button m-click="increment">Increment</button>
-</div>
+<section id="counter">
+    <div m-app="counter">
+        <div class="box" m-text="count"></div>
+        <button m-click="increment">Increment</button>
+    </div>
+</section>
 
+<section id="iteration">
+    <ul m-app="list" m-for="l in list">
+        <li m-text="l">repeat</li>
+    </ul>
+</section>
+
+<section id="computed-properties">
+    Computed Properties
+</section>
+
+<!-- Page contains two scripts. First script is library code
+ Second script is how the user may use the API
+ -->
 <script>
     const Meow = (function () {
         /**
          A page can contain multiple apps. Each app must have unque name.
          */
         const apps = {};
-        const tracks = {};
+        const tracks = new WeakMap();
 
-
+        /**
+         * Reactivity implies being able to observe.
+         * The library must observe data models, and react when the data changes.
+         * Hence all data models must be observable. Following function sets
+         * this up by using getters and setters.
+         */
         function observable(obj, appName) {
             if (typeof obj !== "object") {
                 throw new Error(
@@ -68,8 +113,9 @@
                             return obj[key];
                         },
                         set(value) {
-                            runEffect(appName, key, obj[key], value);
+                            let oldVal =  obj[key]
                             obj[key] = value;
+                            react(appName, key, oldVal, value);
                         }
                     });
                 }
@@ -77,12 +123,38 @@
             return o;
         }
 
-        function runEffect(app, prop, oldVal, val) {
+        function react(app, prop, oldVal, val) {
             //@TODO check if following thing is a node, just checking if it's object is not enough
-            if (typeof tracks[app + "." + prop] === "object") {
-                tracks[app + "." + prop].innerText = val;
-            }
+            run();
         }
+
+        /**
+         * Application developer should be able to define different reactions/behavior
+         * when data changes. Reactions can be, for example,
+         * 1. Console logging
+         * 2. DOM updates like modifying text, modifying html, rendering a list
+         * 3. Posting updates to server
+         * 4. Or any function call
+         *
+         * Hence we need to provide an API for running these reactions.
+         * Generally since a lot of these effects are DOM effects, and are created by marking DOM elements,
+         * these effects are also called as directives
+         *
+         *
+         */
+
+        const directives = {}
+
+        /**
+         * Callback function takes 2 arguments, node and data bound to node
+         * @param name
+         * @param callback
+         */
+        function directive(name,callback){
+            directives[name] = callback;
+        }
+
+
 
         /**
          A model is standard javascript object which contains methods
@@ -96,6 +168,13 @@
             return apps[appName];
         }
 
+        function getDirectivesByNode(node){
+            // find all the attributes which look like directives
+            let attrs = node.getAttributeNames().filter(v=>typeof directives[v]==='function');
+            return attrs;
+        }
+
+
         /**
          Run function will traverse the DOM and
          track all the nodes and properties bound to them
@@ -108,33 +187,91 @@
              */
             let nodes = document.querySelectorAll("[m-app]");
             nodes.forEach((node) => {
+
                 let appName = node.getAttribute("m-app");
+                /**
+                 * Scope tree is not yet implemented. Without scope tree child app will not be able to
+                 * access properies of parent
+                 */
+                let $scope = apps[appName];
 
-                node.querySelectorAll("[m-text]").forEach((n) => {
-                    let prop = n.getAttribute("m-text");
-                    tracks[appName + "." + prop] = n;
-                    n.innerText = apps[appName][prop];
-                });
-
-
-                //@TODO no need to traverse DOM twice. Process the complete DOM once.
-                node.querySelectorAll("[m-click]").forEach((n) => {
-                    let funcName = n.getAttribute("m-click");
-                    if(!apps[appName][funcName]){
-                        throw new Error(`${funcName} function is not defined in app ${appName}`)
-                    }
-                    n.addEventListener('click',apps[appName][funcName]);
-                });
-
+                walkTree(node,$scope);
             });
         }
 
+        //This is the function that actually runs directives
+        function walkTree(node,$scope){
+            if(node.nodeType != 1 ){
+                return;
+            }
+            let attrs = getDirectivesByNode(node);
+
+
+            for(let dir of attrs){
+                directives[dir](node,$scope)
+            }
+
+            for(let n of node.childNodes){
+                walkTree(n,$scope)
+            }
+        }
+
+        directive('m-text',function(el,data){
+            let prop = el.getAttribute('m-text')
+            el.innerText = data[prop];
+        })
+        directive('m-click',function(el,data){
+            let prop = el.getAttribute('m-click')
+            //@TODO check if the function exists
+            el.addEventListener('click',data[prop]);
+        })
+
+        directive('m-if',(el,data)=>{
+            let prop = el.getAttribute('m-if');
+            //what to do ? we can't remove the element because later we wont know what to add.
+            //unless we maintain a virtual DOM, but do we maintain everything in
+        })
+
+        directive('m-for',function(el,data){
+            let prop = el.getAttribute('m-for')
+            //@TODO parsing of m-for expression is really basic right now and
+            // should be improved. Right now we will only handle arrays
+            let [key,arr] = prop.split('in');
+            key = key.trim();
+            arr = arr.trim();
+            /**
+             * elements inside for loop can have there own scope.
+             * consider following example
+             *    m-for="txt in texts"
+             *       x-text="txt['foo']"
+             *       x-text="txt['bar']"
+             *
+             *       In above example m-text must be able to access txt variable whose scope is only
+             *       limited to for.
+             *       One option is to store data directly on the node.
+             *       One wild idea is to maintain a virtual representation of DOM
+             */
+            let child = el.querySelectorAll('li')[0];
+            el.childNodes = [];
+            for(let d of data[arr]){
+               let e =  child.cloneNode(true);
+               walkTree(e,{[key]:d});
+                el.appendChild(e);
+            }
+
+        })
+
+
         return {
             create,
-            run
+            run,
+            directive
         };
     })();
 
+</script>
+
+<script>
     Meow.create("counter", {
         count: 0,
         increment: function () {
@@ -142,8 +279,11 @@
         }
     });
 
-    Meow.run();
+    Meow.create("list", {
+        list: ['l 1','l 2','l 3','l 4'],
+    });
 
+    Meow.run();
 </script>
 </body>
 </html>
